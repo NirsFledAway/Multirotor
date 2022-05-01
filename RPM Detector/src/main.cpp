@@ -1,5 +1,6 @@
 #include <mbed.h>
 #include <esc_pwm.h>
+#include <algorithm>
 
 // Serial pc(PA_9, PA_10, 115200);
 Serial pc(PA_9, PA_10, 115200);
@@ -16,6 +17,42 @@ AnalogIn currentSensor(CURRENT_SENSOR);
 // volatile unsigned long long last_time = 0;
 // volatile bool led_status = false;
 // volatile long long checks = 0;
+
+// static float currentValue = 0;
+// static float currentLog[10] = {0};
+// static
+// const int windowSize = 10;
+
+class MeanValue {
+public:
+  MeanValue() {
+    for(int i = 0; i < size_; ++i) {
+      values_[i] = 0;
+    }
+  }
+
+  void append(float val) {
+    values_[last_idx] = val;
+    last_idx = (last_idx + 1) % size_;
+  }
+
+  float get() {
+    // std::sort(values_, values_+size_);
+    // return values_[size_/2];
+    float val = 0;
+    for (float v : values_) {
+      val += v;
+    }
+    return val / size_;
+  }
+
+  const static int size_ = 20;
+  float values_[size_];
+  int last_idx = 0;
+};
+
+MeanValue currentValue, voltageValue;
+
 
 Timeout flipper, flipper1;
 
@@ -71,44 +108,59 @@ Timeout flipper, flipper1;
 // }
 
 void printCurrent() {
-  const float amperage_meter_scale = 445/3.3;
-  const float amperage_meter_offset = 0/3.3;
+  // const float amperage_meter_scale = 445/3.3;
+  // const float amperage_meter_offset = 0/3.3;
+  // const float REF_VOLTAGE = 3.3;  // V
+
+  // float val = currentSensor.read(); // [0.0; 1.1]
+  // val *= 1000;  // mV
+  
+  // pc.printf("Amps: %f\n", (val * REF_VOLTAGE) / amperage_meter_scale * 10 + amperage_meter_offset / 1000);
+  pc.printf("Amps: %.1f, v: %.2f\n", currentValue.get(), voltageValue.get());
+  flipper.attach(&printCurrent, 0.5);
+}
+
+void calcCurrent() {
+  const float amperage_meter_scale = 285;
+  const float amperage_meter_offset = 500;
   const float REF_VOLTAGE = 3.3;  // V
 
   float val = currentSensor.read(); // [0.0; 1.1]
   val *= 1000;  // mV
+
+  voltageValue.append(val);
   
-  pc.printf("Amps: %f\n", (val * REF_VOLTAGE) / amperage_meter_scale * 10 + amperage_meter_offset / 1000);
-  flipper.attach(&printCurrent, 0.5);
+  currentValue.append((val * REF_VOLTAGE) / amperage_meter_scale * 10 + amperage_meter_offset / 1000);
+  flipper1.attach(&calcCurrent, 0.05);
 }
 
-void handleSerial() {
-  char buff[100];
-  char i = 0, c = ' ';
-  int num = pc.read((uint8_t*)buff, 10, nullptr);
-  if (num > 0) {
-    pc.printf("Got %d\n", num);
-    bool got_whole_line = 0;
-    int pwm_val = 0;
-    for (int j = 0; j < num; ++j) {
-      c = buff[j];
-      if (c == '\n' || c == '\r') {
-          got_whole_line = 1;
-      }
-      if (c >= '0' && c <= '9') {
-        pwm_val *= 10 + (int)(c - '0');
-      }
-    }
-    pc.printf("Got1 %d\n", got_whole_line);
-    i += num;
-    if (got_whole_line) {
-      // pc.printf("Got\n");
-      // esc_write(pwm_val);
-      i = 0;
-    }
-  }
-  // flipper1.attach(&handleSerial, 1);
-}
+// void handleSerial() {
+//   char buff[100];
+//   char i = 0, c = ' ';
+//   int num = pc.read((uint8_t*)buff, 10, nullptr);
+//   if (num > 0) {
+//     pc.printf("Got %d\n", num);
+//     bool got_whole_line = 0;
+//     int pwm_val = 0;
+//     for (int j = 0; j < num; ++j) {
+//       c = buff[j];
+//       if (c == '\n' || c == '\r') {
+//           got_whole_line = 1;
+//       }
+//       if (c >= '0' && c <= '9') {
+//         pwm_val *= 10 + (int)(c - '0');
+//       }
+//     }
+//     pc.printf("Got1 %d\n", got_whole_line);
+//     i += num;
+//     if (got_whole_line) {
+//       // pc.printf("Got\n");
+//       // esc_write(pwm_val);
+//       i = 0;
+//     }
+//   }
+//   // flipper1.attach(&handleSerial, 1);
+// }
 void doCurrentCalc() {
   // pc.set_baudrate(115200);
   // pc.set_format(
@@ -118,54 +170,28 @@ void doCurrentCalc() {
   // );
 
   // wait(3);
+  // arm(&pc);
+  // wait(5);
+  esc_init();
+  pc.printf("Connect the esc\n");
+  wait(5);
+  // setupLimits(&pc);
+  // wait(2);
   arm(&pc);
-  flipper.attach(&printCurrent, 0.5);
+  flipper1.attach(&calcCurrent, 0.05);
+  flipper.attach(&printCurrent, 0.8);
   // flipper1.attach(&handleSerial, 1);
   while(1) {
     // handleSerial();
     int i = 1000;
-    for(i = 1000; i < 1700; i+=50) {
+    for(i = 1050; i <= 2000; i+=50) {
       esc_write(i);
       pc.printf("ESC: %d\n", i);
-      wait(10);
+      wait(3);
     }
-    wait(5);
-ampermetr currentSensor
-1050 0.16 0
-1100 0.36 0
-1150 0.61 0.0
-1200 0.96 1
-1250 1.5 2
-1300 2.14 3.4
-1350 3.0 5.2
-1400 4.0 7.3
-1450 4.96 9.2
-1500 6.07 11.8
-1550 7.37 14.6
-1600 9.03 17.7
-1650 10.57 21
-  
   }
 }
 
 int main() {
   doCurrentCalc();
-//   Ток Скважность Вес
-//   0.3 1050  0 57
-//   0.82  1100  9.55
-//   1.72  1150  21.5
-//   3.24  120 49.0 197
-//   5.04  1250  57  230
-//   7.35  1300  75.6
-//   10.36 1350  94
-
-//   Ток знач
-//   0.28  0.034
-//   0.78  0.21
-//   1.68  0.60 
-//   3.21  0.124
-// 4.89  0.21
-// 7.22  0.30
-// 10.22 0.44
-
 }
